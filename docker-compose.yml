@@ -90,8 +90,7 @@ services:
         JOBS: ${NS3_JOBS:-4}
         NS3_UID: ${NS3_UID:-1000}
         NS3_GID: ${NS3_GID:-1000}
-    image: ${DOCKER_USERNAME:-huakson}/${DOCKER_REPO:-ns3-simulator}:${NS3_VERSION:-3.42}-dev
-    pull_policy: always
+    image: ${DOCKER_USERNAME:-huakson}/${DOCKER_REPO:-ns3-simulator}:${NS3_VERSION:-3.42}-dev # <--- Aqui está correto    pull_policy: always
     container_name: ns3-dev
     hostname: ns3-dev
 
@@ -129,7 +128,7 @@ services:
     stdin_open: true
     tty: true
 
-    command: /bin/bash
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
 
     restart: unless-stopped
 

@@ -80,14 +80,53 @@ main() {
         exit 0
     fi
 
-    # Execute NS-3 command inside container
-    log_info "Executing: ./ns3 $*"
+    # Capture all arguments for NS-3 wrapper or direct binary
+    # This will be the full command line passed to sh -c
+    local CONTAINER_CMD_STRING=""
+
+    # Handle "run" command specifically for direct binary execution or wrapper fallback
+    if [[ "$1" == "run" ]]; then
+        local PROGRAM_NAME="$2"
+        # Shift twice to get rid of "run" and "PROGRAM_NAME"
+        shift 2
+        local PROGRAM_ARGS_ARRAY=("$@") # Capture remaining args as array
+
+        # Build quoted string for program args for sh -c
+        local QUOTED_PROGRAM_ARGS=""
+        for arg in "${PROGRAM_ARGS_ARRAY[@]}"; do
+            QUOTED_PROGRAM_ARGS+=$(printf "%q " "$arg")
+        done
+        # Trim trailing space
+        QUOTED_PROGRAM_ARGS="${QUOTED_PROGRAM_ARGS% }"
+
+        # Check if the direct binary exists inside the container
+        if docker exec "$CONTAINER_NAME" [ -f "/ns3/build/$PROGRAM_NAME" ]; then
+            log_info "Executing compiled binary directly: /ns3/build/$PROGRAM_NAME $QUOTED_PROGRAM_ARGS"
+            CONTAINER_CMD_STRING="/ns3/build/$PROGRAM_NAME $QUOTED_PROGRAM_ARGS"
+        else
+            # Fallback to the standard NS-3 Python wrapper
+            log_info "Executing via NS-3 Python wrapper: ./ns3 run $(printf "%q" "$PROGRAM_NAME") $QUOTED_PROGRAM_ARGS"
+            CONTAINER_CMD_STRING="./ns3 run $(printf "%q" "$PROGRAM_NAME") $QUOTED_PROGRAM_ARGS"
+        fi
+    else
+        # For non-"run" commands (e.g., "build", "configure")
+        # Build quoted string for all arguments
+        local QUOTED_ALL_ARGS=""
+        for arg in "$@"; do
+            QUOTED_ALL_ARGS+=$(printf "%q " "$arg")
+        done
+        QUOTED_ALL_ARGS="${QUOTED_ALL_ARGS% }"
+
+        log_info "Executing standard NS-3 command: ./ns3 $QUOTED_ALL_ARGS"
+        CONTAINER_CMD_STRING="./ns3 $QUOTED_ALL_ARGS"
+    fi
 
     # Capture start time
     START_TIME=$(date +%s)
 
-    # Run command and capture exit code
-    if docker exec -it "$CONTAINER_NAME" ./ns3 "$@"; then
+    # Execute the command inside the container
+    # Use sh -c with the carefully quoted command string
+    if docker exec -it "$CONTAINER_NAME" sh -c "$CONTAINER_CMD_STRING"; then
         END_TIME=$(date +%s)
         DURATION=$((END_TIME - START_TIME))
         log_success "Command completed in ${DURATION}s"

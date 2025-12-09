@@ -101,14 +101,18 @@ RUN apk add --no-cache \
     bash \
     python3 \
     py3-pip \
+    # Build tools for scratch simulations
+    build-base \
+    cmake \
+    ninja \
+    ccache \
     # Required libraries
     libstdc++ \
     libgcc \
-    gsl \
-    sqlite-libs \
-    libxml2 \
-    boost-system \
-    boost-filesystem \
+    gsl-dev \
+    sqlite-dev \
+    libxml2-dev \
+    boost-dev \
     # Utilities
     coreutils \
     findutils \
@@ -163,10 +167,12 @@ RUN apk add --no-cache \
     valgrind \
     strace \
     htop \
+    python3-dev \
+    linux-headers \
     && rm -rf /var/cache/apk/*
 
 # Install Python packages for analysis
-RUN pip3 install --no-cache-dir \
+RUN pip3 install --no-cache-dir --break-system-packages \
     numpy \
     pandas \
     matplotlib \

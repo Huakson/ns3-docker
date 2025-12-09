@@ -1,0 +1,22 @@
+# Ignore Docker build artifacts
+build/
+cmake-cache/
+*.o
+*.so
+*.a
+results/*.csv
+results/*.txt
+results/*.pcap
+results/*.log
+results/logs/
+results/.gitkeep
+
+# Ignore common files
+.env
+.DS_Store
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[co]
