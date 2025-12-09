@@ -95,7 +95,11 @@ docker compose --profile dev up -d ns3-dev
    ```
 2. Open the URL in your browser.
 
-![Jupyter Lab Environment](public/jupyter.png)
+<br>
+<p align="center">
+  <img src="public/jupyter.png" alt="Jupyter Lab Environment" width="100%" style="border-radius: 10px; border: 1px solid #e0e0e0; box-shadow: 0 5px 15px rgba(0,0,0,0.1);">
+</p>
+<br>
 
 **Stop the environment:**
 ```bash
