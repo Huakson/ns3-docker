@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# ============================================================================
+# NS-3 Shell Script - Open interactive bash shell inside container
+# Usage: ./scripts/ns3-shell
+# ============================================================================
+
+set -e
+
+# Colors
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    source "$PROJECT_DIR/.env"
+fi
+
+CONTAINER_NAME="${COMPOSE_PROJECT_NAME:-ns3}-runtime"
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+check_docker() {
+    if ! docker info >/dev/null 2>&1; then
+        log_error "Docker is not running"
+        exit 1
+    fi
+}
+
+check_container() {
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        log_info "Starting container..."
+        cd "$PROJECT_DIR"
+        docker compose up -d ns3
+        sleep 2
+    fi
+}
+
+main() {
+    check_docker
+    check_container
+
+    log_info "Opening interactive shell in NS-3 container..."
+    log_info "Working directory: /ns3"
+    log_info "Type 'exit' to return to host shell"
+    echo ""
+
+    docker exec -it "$CONTAINER_NAME" /bin/bash
+}
+
+main "$@"

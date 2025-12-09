@@ -1,0 +1,204 @@
+# ============================================================================
+# NS-3.42 Docker Compose Configuration
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # Main NS-3 Runtime Service (Production)
+  # --------------------------------------------------------------------------
+  ns3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        NS3_VERSION: ${NS3_VERSION:-3.42}
+        NS3_BUILD_PROFILE: ${NS3_BUILD_PROFILE:-optimized}
+        JOBS: ${NS3_JOBS:-4}
+        NS3_UID: ${NS3_UID:-1000}
+        NS3_GID: ${NS3_GID:-1000}
+    image: ${DOCKER_USERNAME:-huakson}/${DOCKER_REPO:-ns3-simulator}:${NS3_VERSION:-3.42}-runtime
+    pull_policy: always
+    container_name: ns3-runtime
+    hostname: ns3-simulator
+
+    # Volume mappings for easy I/O
+    volumes:
+      # Input: Your simulation scripts
+      - ${SCRATCH_DIR:-./scratch}:/ns3/scratch:rw
+
+      # Output: Simulation results (CSV, logs, pcap)
+      - ${RESULTS_DIR:-./results}:/ns3/results:rw
+
+      # Optional: Custom modules
+      - ${CONTRIB_DIR:-./contrib}:/ns3/contrib:rw
+
+      # Build cache (persistent across runs for faster rebuilds)
+      - ns3-build-cache:/ns3/build
+      - ns3-cmake-cache:/ns3/cmake-cache
+
+    # Environment variables
+    environment:
+      - NS3_HOME=/ns3
+      - RESULTS_DIR=/ns3/results
+      - TZ=${TZ:-UTC}
+      - PYTHONUNBUFFERED=1
+
+    # Resource limits (adjust based on your system)
+    deploy:
+      resources:
+        limits:
+          cpus: "${NS3_CPU_LIMIT:-4.0}"
+          memory: ${NS3_MEM_LIMIT:-4G}
+        reservations:
+          cpus: "${NS3_CPU_RESERVATION:-1.0}"
+          memory: ${NS3_MEM_RESERVATION:-512M}
+
+    # Networking
+    networks:
+      - ns3-network
+
+    # Keep container running in interactive mode
+    stdin_open: true
+    tty: true
+
+    # Default command (can be overridden)
+    command: tail -f /dev/null
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "/ns3/ns3", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # --------------------------------------------------------------------------
+  # Development Service (with build tools and Jupyter)
+  # --------------------------------------------------------------------------
+  ns3-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+      args:
+        NS3_VERSION: ${NS3_VERSION:-3.42}
+        NS3_BUILD_PROFILE: debug
+        JOBS: ${NS3_JOBS:-4}
+        NS3_UID: ${NS3_UID:-1000}
+        NS3_GID: ${NS3_GID:-1000}
+    image: ${DOCKER_USERNAME:-huakson}/${DOCKER_REPO:-ns3-simulator}:${NS3_VERSION:-3.42}-dev
+    pull_policy: always
+    container_name: ns3-dev
+    hostname: ns3-dev
+
+    volumes:
+      - ${SCRATCH_DIR:-./scratch}:/ns3/scratch:rw
+      - ${RESULTS_DIR:-./results}:/ns3/results:rw
+      - ${CONTRIB_DIR:-./contrib}:/ns3/contrib:rw
+      - ns3-build-cache:/ns3/build
+      - ns3-cmake-cache:/ns3/cmake-cache
+      # Mount entire source for development
+      - ./examples:/ns3/examples-custom:ro
+
+    environment:
+      - NS3_HOME=/ns3
+      - RESULTS_DIR=/ns3/results
+      - TZ=${TZ:-UTC}
+      - PYTHONUNBUFFERED=1
+      - JUPYTER_ENABLE_LAB=yes
+
+    ports:
+      # Jupyter Lab
+      - "${JUPYTER_PORT:-8888}:8888"
+      # Custom application ports
+      - "${APP_PORT:-9000}:9000"
+
+    deploy:
+      resources:
+        limits:
+          cpus: "${NS3_CPU_LIMIT:-8.0}"
+          memory: ${NS3_MEM_LIMIT:-8G}
+
+    networks:
+      - ns3-network
+
+    stdin_open: true
+    tty: true
+
+    command: /bin/bash
+
+    restart: unless-stopped
+
+    profiles:
+      - dev
+
+  # --------------------------------------------------------------------------
+  # Batch Processing Service (for running multiple simulations)
+  # --------------------------------------------------------------------------
+  ns3-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        NS3_VERSION: ${NS3_VERSION:-3.42}
+        NS3_BUILD_PROFILE: ${NS3_BUILD_PROFILE:-optimized}
+        JOBS: ${NS3_JOBS:-4}
+    image: ${DOCKER_USERNAME:-huakson}/${DOCKER_REPO:-ns3-simulator}:${NS3_VERSION:-3.42}-runtime
+    pull_policy: always
+    container_name: ns3-batch
+    hostname: ns3-batch
+
+    volumes:
+      - ${SCRATCH_DIR:-./scratch}:/ns3/scratch:ro
+      - ${RESULTS_DIR:-./results}:/ns3/results:rw
+      - ns3-build-cache:/ns3/build
+
+    environment:
+      - NS3_HOME=/ns3
+      - RESULTS_DIR=/ns3/results
+      - BATCH_MODE=true
+
+    deploy:
+      resources:
+        limits:
+          cpus: "${NS3_CPU_LIMIT:-4.0}"
+          memory: ${NS3_MEM_LIMIT:-4G}
+      replicas: ${BATCH_REPLICAS:-1}
+
+    networks:
+      - ns3-network
+
+    restart: "no"
+
+    profiles:
+      - batch
+
+# ============================================================================
+# Named Volumes (persistent storage)
+# ============================================================================
+volumes:
+  # Build cache for faster rebuilds
+  ns3-build-cache:
+    driver: local
+    name: ns3-build-cache
+
+  # CMake cache
+  ns3-cmake-cache:
+    driver: local
+    name: ns3-cmake-cache
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  ns3-network:
+    driver: bridge
+    name: ns3-network
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

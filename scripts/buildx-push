@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+# ============================================================================
+# Docker Buildx Multi-Architecture Push
+# Build and push images for amd64 AND arm64 (Apple M1/M2)
+# Usage: ./scripts/buildx-push [--runtime|--dev|--all]
+# ============================================================================
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Load environment
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    source "$PROJECT_DIR/.env"
+fi
+
+DOCKER_USERNAME="${DOCKER_USERNAME:-huakson}"
+DOCKER_REPO="${DOCKER_REPO:-ns3-simulator}"
+NS3_VERSION="${NS3_VERSION:-3.42}"
+NS3_BUILD_PROFILE="${NS3_BUILD_PROFILE:-optimized}"
+NS3_JOBS="${NS3_JOBS:-4}"
+
+RUNTIME_IMAGE="${DOCKER_USERNAME}/${DOCKER_REPO}:${NS3_VERSION}-runtime"
+DEV_IMAGE="${DOCKER_USERNAME}/${DOCKER_REPO}:${NS3_VERSION}-dev"
+LATEST_IMAGE="${DOCKER_USERNAME}/${DOCKER_REPO}:latest"
+
+# Architectures to build
+PLATFORMS="linux/amd64,linux/arm64"
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_buildx() { echo -e "${CYAN}[BUILDX]${NC} $1"; }
+log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+
+check_docker_login() {
+    log_info "Checking Docker Hub login..."
+
+    # Check if logged in (try multiple methods)
+    if docker info 2>/dev/null | grep -qi "username"; then
+        log_success "Logged into Docker Hub"
+    elif cat ~/.docker/config.json 2>/dev/null | grep -q "auths"; then
+        log_success "Docker credentials found"
+    else
+        log_error "Not logged into Docker Hub"
+        log_info "Please run: docker login"
+        exit 1
+    fi
+}
+
+setup_buildx() {
+    log_info "Setting up Docker Buildx..."
+
+    # Check if buildx is available
+    if ! docker buildx version >/dev/null 2>&1; then
+        log_error "Docker Buildx is not available"
+        log_info "Please update Docker to the latest version"
+        exit 1
+    fi
+
+    # Create or use existing builder
+    BUILDER_NAME="ns3-multiarch-builder"
+
+    if docker buildx ls | grep -q "$BUILDER_NAME"; then
+        log_info "Using existing builder: $BUILDER_NAME"
+    else
+        log_info "Creating new builder: $BUILDER_NAME"
+        docker buildx create --name "$BUILDER_NAME" --use --bootstrap
+    fi
+
+    # Use the builder
+    docker buildx use "$BUILDER_NAME"
+
+    log_success "Buildx ready for multi-architecture builds"
+    log_info "Platforms: $PLATFORMS"
+}
+
+build_and_push() {
+    local TARGET=$1
+    local IMAGE=$2
+    local PROFILE=$3
+
+    log_buildx "Building and pushing: $IMAGE"
+    log_info "Target: $TARGET"
+    log_info "Platforms: $PLATFORMS"
+    log_warning "This may take 15-30 minutes depending on your internet..."
+
+    cd "$PROJECT_DIR"
+
+    # Build and push directly (buildx can do both at once)
+    if docker buildx build \
+        --platform "$PLATFORMS" \
+        --target "$TARGET" \
+        --build-arg NS3_VERSION="$NS3_VERSION" \
+        --build-arg NS3_BUILD_PROFILE="$PROFILE" \
+        --build-arg JOBS="$NS3_JOBS" \
+        --build-arg NS3_UID=1000 \
+        --build-arg NS3_GID=1000 \
+        --tag "$IMAGE" \
+        --push \
+        --progress=plain \
+        .; then
+        log_success "Built and pushed: $IMAGE"
+        return 0
+    else
+        log_error "Failed to build/push: $IMAGE"
+        return 1
+    fi
+}
+
+tag_and_push_latest() {
+    log_info "Creating manifest for latest tag..."
+
+    # For latest, we just re-tag the runtime image
+    # Docker will reuse the layers, so it's fast
+    docker buildx imagetools create \
+        --tag "$LATEST_IMAGE" \
+        "$RUNTIME_IMAGE"
+
+    log_success "Tagged and pushed: $LATEST_IMAGE"
+}
+
+show_help() {
+    cat << EOF
+Docker Buildx Multi-Architecture Build & Push
+
+Usage: ./scripts/buildx-push [OPTIONS]
+
+This script builds Docker images for BOTH amd64 (Intel/AMD) and arm64 (Apple M1/M2)
+and pushes them to Docker Hub as a single multi-arch image.
+
+Options:
+    --runtime   Build and push runtime image only
+    --dev       Build and push development image only
+    --all       Build and push all images (default)
+    --latest    Also tag runtime as latest
+    --help      Show this help message
+
+Examples:
+    ./scripts/buildx-push                   # Build all for both architectures
+    ./scripts/buildx-push --runtime         # Runtime only
+    ./scripts/buildx-push --all --latest    # All + tag latest
+
+Environment Variables (from .env):
+    DOCKER_USERNAME=$DOCKER_USERNAME
+    DOCKER_REPO=$DOCKER_REPO
+    NS3_VERSION=$NS3_VERSION
+    NS3_BUILD_PROFILE=$NS3_BUILD_PROFILE
+
+Images to be built:
+    - $RUNTIME_IMAGE (amd64 + arm64)
+    - $DEV_IMAGE (amd64 + arm64)
+    - $LATEST_IMAGE (optional)
+
+Platforms:
+    - linux/amd64 (Intel/AMD CPUs - Ubuntu, etc.)
+    - linux/arm64 (Apple M1/M2, ARM servers)
+
+Notes:
+    - This will take 15-30 minutes (building for 2 architectures)
+    - Images are pushed directly, not stored locally
+    - Your machine doesn't need to support both architectures
+    - Docker uses QEMU for cross-compilation
+
+EOF
+}
+
+main() {
+    local BUILD_RUNTIME=false
+    local BUILD_DEV=false
+    local TAG_LATEST=false
+
+    # Parse arguments
+    if [[ $# -eq 0 ]]; then
+        BUILD_RUNTIME=true
+        BUILD_DEV=true
+    else
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --runtime)
+                    BUILD_RUNTIME=true
+                    shift
+                    ;;
+                --dev)
+                    BUILD_DEV=true
+                    shift
+                    ;;
+                --all)
+                    BUILD_RUNTIME=true
+                    BUILD_DEV=true
+                    shift
+                    ;;
+                --latest)
+                    TAG_LATEST=true
+                    shift
+                    ;;
+                --help|-h)
+                    show_help
+                    exit 0
+                    ;;
+                *)
+                    log_error "Unknown option: $1"
+                    show_help
+                    exit 1
+                    ;;
+            esac
+        done
+    fi
+
+    echo ""
+    log_buildx "╔════════════════════════════════════════════════════╗"
+    log_buildx "║   NS-3 Multi-Architecture Build & Push             ║"
+    log_buildx "║   Building for: amd64 (Intel) + arm64 (Apple M1)   ║"
+    log_buildx "╚════════════════════════════════════════════════════╝"
+    echo ""
+
+    check_docker_login
+    setup_buildx
+
+    echo ""
+    log_info "Build configuration:"
+    log_info "  Runtime: $BUILD_RUNTIME"
+    log_info "  Development: $BUILD_DEV"
+    log_info "  Tag Latest: $TAG_LATEST"
+    echo ""
+
+    local SUCCESS=0
+    local FAILED=0
+    local START_TIME=$(date +%s)
+
+    # Build runtime image
+    if [[ "$BUILD_RUNTIME" == true ]]; then
+        echo ""
+        log_buildx "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_buildx "Building RUNTIME image (multi-arch)..."
+        log_buildx "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        if build_and_push "runtime" "$RUNTIME_IMAGE" "$NS3_BUILD_PROFILE"; then
+            ((SUCCESS++))
+        else
+            ((FAILED++))
+        fi
+    fi
+
+    # Build dev image
+    if [[ "$BUILD_DEV" == true ]]; then
+        echo ""
+        log_buildx "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_buildx "Building DEVELOPMENT image (multi-arch)..."
+        log_buildx "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        if build_and_push "development" "$DEV_IMAGE" "debug"; then
+            ((SUCCESS++))
+        else
+            ((FAILED++))
+        fi
+    fi
+
+    # Tag latest
+    if [[ "$TAG_LATEST" == true && "$BUILD_RUNTIME" == true ]]; then
+        echo ""
+        log_buildx "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_buildx "Tagging as LATEST..."
+        log_buildx "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        if tag_and_push_latest; then
+            ((SUCCESS++))
+        else
+            ((FAILED++))
+        fi
+    fi
+
+    local END_TIME=$(date +%s)
+    local DURATION=$((END_TIME - START_TIME))
+    local MINUTES=$((DURATION / 60))
+    local SECONDS=$((DURATION % 60))
+
+    # Summary
+    echo ""
+    log_buildx "╔════════════════════════════════════════════════════╗"
+    log_buildx "║              BUILD SUMMARY                         ║"
+    log_buildx "╚════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "Time taken: ${MINUTES}m ${SECONDS}s"
+    log_success "Successful: $SUCCESS"
+    if [[ $FAILED -gt 0 ]]; then
+        log_error "Failed: $FAILED"
+    fi
+    echo ""
+    log_info "Images pushed to: hub.docker.com/r/${DOCKER_USERNAME}/${DOCKER_REPO}"
+    echo ""
+    log_success "✓ Your images work on:"
+    echo "  - Ubuntu/Linux (amd64)"
+    echo "  - MacBook M1/M2 (arm64)"
+    echo "  - AWS Graviton (arm64)"
+    echo "  - Raspberry Pi 4+ (arm64)"
+    echo ""
+
+    if [[ $FAILED -gt 0 ]]; then
+        exit 1
+    fi
+}
+
+main "$@"

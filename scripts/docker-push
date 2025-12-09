@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# ============================================================================
+# Docker Push Script - Push NS-3 images to Docker Hub
+# Usage: ./scripts/docker-push [--runtime|--dev|--all]
+# ============================================================================
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Load environment
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    source "$PROJECT_DIR/.env"
+fi
+
+DOCKER_USERNAME="${DOCKER_USERNAME:-huakson}"
+DOCKER_REPO="${DOCKER_REPO:-ns3-simulator}"
+NS3_VERSION="${NS3_VERSION:-3.42}"
+
+RUNTIME_IMAGE="${DOCKER_USERNAME}/${DOCKER_REPO}:${NS3_VERSION}-runtime"
+DEV_IMAGE="${DOCKER_USERNAME}/${DOCKER_REPO}:${NS3_VERSION}-dev"
+LATEST_IMAGE="${DOCKER_USERNAME}/${DOCKER_REPO}:latest"
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_push() { echo -e "${MAGENTA}[PUSH]${NC} $1"; }
+
+check_docker_login() {
+    log_info "Checking Docker Hub login..."
+
+    # Check if logged in (try multiple methods)
+    if docker info 2>/dev/null | grep -qi "username"; then
+        log_success "Logged into Docker Hub"
+    elif cat ~/.docker/config.json 2>/dev/null | grep -q "auths"; then
+        log_success "Docker credentials found"
+    else
+        log_error "Not logged into Docker Hub"
+        log_info "Please run: docker login"
+        exit 1
+    fi
+}
+
+push_image() {
+    local IMAGE=$1
+    log_push "Pushing: $IMAGE"
+
+    if docker push "$IMAGE"; then
+        log_success "Pushed: $IMAGE"
+        return 0
+    else
+        log_error "Failed to push: $IMAGE"
+        return 1
+    fi
+}
+
+tag_latest() {
+    log_info "Tagging runtime as latest..."
+    docker tag "$RUNTIME_IMAGE" "$LATEST_IMAGE"
+    push_image "$LATEST_IMAGE"
+}
+
+show_help() {
+    cat << EOF
+Docker Push Script for NS-3
+
+Usage: ./scripts/docker-push [OPTIONS]
+
+Options:
+    --runtime   Push runtime image only
+    --dev       Push development image only
+    --all       Push all images (default)
+    --latest    Tag and push runtime as latest
+    --help      Show this help message
+
+Examples:
+    ./scripts/docker-push                # Push all images
+    ./scripts/docker-push --runtime      # Push runtime only
+    ./scripts/docker-push --all --latest # Push all + tag latest
+
+Environment Variables (from .env):
+    DOCKER_USERNAME=$DOCKER_USERNAME
+    DOCKER_REPO=$DOCKER_REPO
+    NS3_VERSION=$NS3_VERSION
+
+Images to be pushed:
+    - $RUNTIME_IMAGE
+    - $DEV_IMAGE
+    - $LATEST_IMAGE (with --latest)
+
+EOF
+}
+
+main() {
+    local PUSH_RUNTIME=false
+    local PUSH_DEV=false
+    local PUSH_LATEST=false
+
+    # Parse arguments
+    if [[ $# -eq 0 ]]; then
+        PUSH_RUNTIME=true
+        PUSH_DEV=true
+    else
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --runtime)
+                    PUSH_RUNTIME=true
+                    shift
+                    ;;
+                --dev)
+                    PUSH_DEV=true
+                    shift
+                    ;;
+                --all)
+                    PUSH_RUNTIME=true
+                    PUSH_DEV=true
+                    shift
+                    ;;
+                --latest)
+                    PUSH_LATEST=true
+                    shift
+                    ;;
+                --help|-h)
+                    show_help
+                    exit 0
+                    ;;
+                *)
+                    log_error "Unknown option: $1"
+                    show_help
+                    exit 1
+                    ;;
+            esac
+        done
+    fi
+
+    check_docker_login
+
+    echo ""
+    log_push "Starting Docker Hub push..."
+    echo ""
+
+    local SUCCESS=0
+    local FAILED=0
+
+    # Push runtime image
+    if [[ "$PUSH_RUNTIME" == true ]]; then
+        if push_image "$RUNTIME_IMAGE"; then
+            ((SUCCESS++))
+        else
+            ((FAILED++))
+        fi
+        echo ""
+    fi
+
+    # Push dev image
+    if [[ "$PUSH_DEV" == true ]]; then
+        if push_image "$DEV_IMAGE"; then
+            ((SUCCESS++))
+        else
+            ((FAILED++))
+        fi
+        echo ""
+    fi
+
+    # Tag and push latest
+    if [[ "$PUSH_LATEST" == true ]]; then
+        if tag_latest; then
+            ((SUCCESS++))
+        else
+            ((FAILED++))
+        fi
+        echo ""
+    fi
+
+    # Summary
+    log_info "================================================"
+    log_info "Push Summary:"
+    log_success "  Successful: $SUCCESS"
+    if [[ $FAILED -gt 0 ]]; then
+        log_error "  Failed: $FAILED"
+    fi
+    log_info "================================================"
+
+    if [[ $FAILED -gt 0 ]]; then
+        exit 1
+    fi
+}
+
+main "$@"

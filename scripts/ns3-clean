@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# ============================================================================
+# NS-3 Clean Script - Clean build artifacts and results
+# Usage: ./scripts/ns3-clean [--all]
+# ============================================================================
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    source "$PROJECT_DIR/.env"
+fi
+
+CONTAINER_NAME="${COMPOSE_PROJECT_NAME:-ns3}-runtime"
+RESULTS_DIR="${RESULTS_DIR:-./results}"
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+check_docker() {
+    if ! docker info >/dev/null 2>&1; then
+        log_error "Docker is not running"
+        exit 1
+    fi
+}
+
+clean_build() {
+    log_info "Cleaning NS-3 build artifacts..."
+
+    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        docker exec "$CONTAINER_NAME" ./ns3 clean || true
+        log_success "Build artifacts cleaned"
+    else
+        log_warning "Container not running, skipping build clean"
+    fi
+}
+
+clean_results() {
+    log_info "Cleaning results directory..."
+
+    if [[ -d "$PROJECT_DIR/$RESULTS_DIR" ]]; then
+        FILE_COUNT=$(find "$PROJECT_DIR/$RESULTS_DIR" -type f | wc -l)
+
+        if [[ $FILE_COUNT -gt 0 ]]; then
+            read -p "Delete $FILE_COUNT files from $RESULTS_DIR? (y/N): " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                rm -rf "$PROJECT_DIR/$RESULTS_DIR"/*
+                log_success "Results cleaned"
+            else
+                log_info "Skipped results cleaning"
+            fi
+        else
+            log_info "Results directory is already empty"
+        fi
+    fi
+}
+
+clean_docker() {
+    log_info "Stopping and removing containers..."
+
+    cd "$PROJECT_DIR"
+    docker compose down -v
+
+    log_success "Containers stopped and removed"
+
+    read -p "Remove Docker images? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        docker rmi ns3:3.42-alpine-runtime 2>/dev/null || true
+        docker rmi ns3:3.42-alpine-dev 2>/dev/null || true
+        log_success "Docker images removed"
+    fi
+}
+
+show_help() {
+    cat << EOF
+NS-3 Clean Script
+
+Usage: ./scripts/ns3-clean [OPTIONS]
+
+Options:
+    (no args)   Clean build artifacts only
+    --all       Clean everything (build + results + Docker)
+    --results   Clean results directory only
+    --docker    Clean Docker containers and images
+    --help      Show this help message
+
+Examples:
+    ./scripts/ns3-clean              # Clean build artifacts
+    ./scripts/ns3-clean --all        # Clean everything
+    ./scripts/ns3-clean --results    # Clean only results
+
+EOF
+}
+
+main() {
+    check_docker
+
+    case "${1:-}" in
+        --all)
+            log_info "Deep cleaning NS-3 environment..."
+            clean_build
+            clean_results
+            clean_docker
+            log_success "Deep clean completed"
+            ;;
+        --results)
+            clean_results
+            ;;
+        --docker)
+            clean_docker
+            ;;
+        --help|-h)
+            show_help
+            ;;
+        "")
+            clean_build
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

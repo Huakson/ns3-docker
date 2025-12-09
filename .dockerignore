@@ -1,0 +1,73 @@
+# ============================================================================
+# Docker Ignore - Exclude unnecessary files from Docker build context
+# ============================================================================
+
+# Results and outputs
+results/
+*.csv
+*.pcap
+*.log
+*.txt
+
+# Build artifacts
+build/
+cmake-cache/
+*.o
+*.so
+*.a
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+dist/
+.pytest_cache/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Environment
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Archives
+*.tar
+*.tar.gz
+*.tar.bz2
+*.zip

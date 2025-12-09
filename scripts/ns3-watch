@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# ============================================================================
+# NS-3 Watch Script - Auto-rebuild when files change (Development Mode)
+# Usage: ./scripts/ns3-watch [target]
+# ============================================================================
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    source "$PROJECT_DIR/.env"
+fi
+
+CONTAINER_NAME="${COMPOSE_PROJECT_NAME:-ns3}-runtime"
+WATCH_DIR="$PROJECT_DIR/scratch"
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_watch() { echo -e "${CYAN}[WATCH]${NC} $1"; }
+
+check_dependencies() {
+    if ! command -v inotifywait &> /dev/null; then
+        log_error "inotify-tools is not installed"
+        log_info "Install with: sudo apt-get install inotify-tools (Ubuntu/Debian)"
+        log_info "           or: sudo yum install inotify-tools (CentOS/RHEL)"
+        exit 1
+    fi
+}
+
+check_docker() {
+    if ! docker info >/dev/null 2>&1; then
+        log_error "Docker is not running"
+        exit 1
+    fi
+}
+
+check_container() {
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        log_info "Starting container..."
+        cd "$PROJECT_DIR"
+        docker compose up -d ns3
+        sleep 2
+    fi
+}
+
+build_target() {
+    local TARGET="$1"
+    log_watch "Change detected, rebuilding..."
+
+    if [[ -z "$TARGET" ]]; then
+        docker exec "$CONTAINER_NAME" ./ns3 build
+    else
+        docker exec "$CONTAINER_NAME" ./ns3 build "$TARGET"
+    fi
+
+    if [[ $? -eq 0 ]]; then
+        log_success "Build completed at $(date '+%H:%M:%S')"
+    else
+        log_error "Build failed at $(date '+%H:%M:%S')"
+    fi
+    echo ""
+}
+
+main() {
+    check_dependencies
+    check_docker
+    check_container
+
+    local TARGET="${1:-}"
+
+    log_watch "Starting watch mode on: $WATCH_DIR"
+    log_info "Target: ${TARGET:-all}"
+    log_info "Press Ctrl+C to stop watching"
+    echo ""
+
+    # Initial build
+    build_target "$TARGET"
+
+    # Watch for changes
+    inotifywait -m -r -e modify,create,delete --format '%w%f' "$WATCH_DIR" | while read FILE
+    do
+        # Only trigger on .cc files
+        if [[ "$FILE" =~ \.cc$ ]]; then
+            log_watch "Detected change in: $(basename "$FILE")"
+            sleep 0.5  # Debounce
+            build_target "$TARGET"
+        fi
+    done
+}
+
+# Trap Ctrl+C
+trap 'echo ""; log_info "Stopping watch mode..."; exit 0' SIGINT SIGTERM
+
+main "$@"
